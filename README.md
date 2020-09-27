@@ -55,7 +55,6 @@ welcome to murmur conf
     mumble.remove_channel(server, channel_id)
     mumble.get_channel_state(server, channel_id)
     mumble.send_channel_message(server, channel_id, msg)
-    mumble.interactive_mode()
 ```
 
 
@@ -87,3 +86,4 @@ optional arguments:
 ## license
 
 see [LICENSE](LICENSE)
+
