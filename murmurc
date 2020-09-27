@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+
+"""
+murmurc - murmur conf.
+License: BSD 3-Clause
+Copyright (c) 2020, Mauro <mauro@sdf.org>
+All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+__author__ = "Mauro"
+__version__ = "0.0.1"
+__license__ = "BSD3"
+
+import argparse
+import tempfile
+from pathlib import Path
+from os import environ as env
+from datetime import timedelta
+
+import Ice
+import IcePy
+
+IPYTHON_MODE = False
+try:
+    from IPython import embed
+    IPYTHON_MODE = True
+except:
+    import pdb
+
+
+ICE_HOST = "127.0.0.1"
+ICE_PORT = 6502
+ICE_ROOT = "/usr/share/ice/slice"
+ICE_MURMUR = "/usr/share/slice/Murmur.ice"
+
+class murmurc(object):
+    """
+welcome to murmur conf
+----------------------
+
+## Server
+    mumble.get_conf(server, key)
+    mumble.set_conf(server, key, value)
+
+    mumble.server_start(server)
+    mumble.server_stop(server)
+
+    mumble.get_server(server_id)
+    mumble.get_servers()
+    mumble.get_all_servers()
+    mumble.get_booted_servers()
+
+    mumble.get_server_name(server)
+    mumble.get_server_host(server)
+    mumble.get_server_port(server)
+    mumble.get_server_password(server)
+    mumble.get_server_welcometext(server)
+    mumble.get_server_tree(server)
+    mumble.get_server_channels(server)
+    mumble.get_server_uptime(server, for_humans=False)
+    mumble.get_server_users(server)
+    mumble.get_server_registered_users(server)
+
+    mumble.set_server_name(server, value)
+    mumble.set_server_host(server, value)
+    mumble.set_server_port(server, value)
+    mumble.set_server_password(server, value)
+    mumble.set_server_welcometext(server, value)
+    mumble.set_server_users(server, value)
+    mumble.set_server_timeout(server, value)
+    mumble.set_server_bandwidth(server, value)
+
+##  User
+    mumble.set_user_mute(server, user)
+    mumble.set_user_unmute(server, user)
+    mumble.send_user_message(server, user, msg)
+    mumble.kick_user(server, user, msg)
+
+## Channel
+    mumble.add_channel(server, name, level=0)
+    mumble.remove_channel(server, channel_id)
+    mumble.get_channel_state(server, channel_id)
+    mumble.send_channel_message(server, channel_id, msg)
+    mumble.interactive_mode()
+
+    """
+
+    def __init__(
+        self,
+        ice_host=ICE_HOST,
+        ice_port=ICE_PORT,
+        ice_root=ICE_ROOT,
+        ice_murmur=ICE_MURMUR,
+        secret="",
+    ):
+        self._murmur = None
+        self._ice_host = ice_host
+        self._ice_port = ice_port
+        self._ice_root = ice_root
+        self._ice_murmur = ice_murmur
+        self._secret = secret
+
+        ice, proxy = self.__setup_ice(self._ice_root, self._ice_murmur)
+        self._ice = ice
+        self._proxy = proxy
+
+    def __load_slice(self, ice_root="", ice_murmur=""):
+        if ice_root and ice_murmur:
+            ice_root = f"-I{ice_root}" if ice_root else ""
+            Ice.loadSlice(f"--all {ice_root} {ice_murmur}")
+        else:
+            ice_root = Ice.getSliceDir()
+            if not ice_root:
+                ice_root = " ".join(
+                    [
+                        f"-I/usr/share/{_}"
+                        for _ in [
+                            "slice",
+                            "ice/slice",
+                            "Ice/slice",
+                        ]
+                    ]
+                )
+            else:
+                ice_root = f"-I {slicedir}"
+
+            operation = IcePy.Operation(
+                "getSlice",
+                Ice.OperationMode.Idempotent,
+                Ice.OperationMode.Idempotent,
+                True,
+                None,
+                (),
+                (),
+                (),
+                ((), IcePy._t_string, False, 0),
+                (),
+            )
+
+            code = operation.invoke(self._proxy, ((), None))
+
+            _, tmp_murmur = tempfile.mkstemp(suffix=".ice")
+            tmp_murmur = Path(tmp_murmur)
+            tmp_murmur.open("w").write(code)
+
+            self.__load_slice(ice_root, str(tmp_murmur))
+            tmp_murmur.unlink()
+
+    def __setup_ice(self, ice_root, ice_murmur):
+        self.__load_slice(ice_root, ice_murmur)
+
+        ice_props = Ice.createProperties([])
+        ice_props.setProperty("Ice.ImplicitContext", "Shared")
+        ice_props.setProperty("Ice.Default.EncodingVersion", "1.0")
+
+        ice_data = Ice.InitializationData()
+        ice_data.properties = ice_props
+
+        ice = Ice.initialize(ice_data)
+        proxy = ice.stringToProxy(
+            f"Meta:tcp -h {self._ice_host} -p {self._ice_port} -t 1000"
+        )
+
+        return ice, proxy
+
+    def connect(self):
+        import Murmur
+
+        secret = self._secret
+        if not secret:
+            secret = env.get("MURMUR_SECRET", "")
+        if secret:
+            self._ice.getImplicitContext().put("secret", secret)
+
+        self._murmur = Murmur.MetaPrx.checkedCast(self._proxy)
+        return self._murmur
+
+    def disconnect(self):
+        if self._ice:
+            self._ice.destroy()
+
+    # servers
+
+    def get_all_servers(self):
+        assert self._murmur, "Load Murmur first!"
+        return self._murmur.getAllServers()
+
+    def get_booted_servers(self):
+        assert self._murmur, "Load Murmur first!"
+        return self._murmur.getBootedServers()
+
+    def get_servers(self):
+        return get_booted_servers()
+
+    def get_server(self, server_id):
+        return self._murmur.getServer(server_id)
+
+    def server_start(self, server):
+        server.start()
+
+    def server_stop(self, server):
+        server.stop()
+
+    # get config
+    def get_conf(self, server, key):
+        if not server.isRunning():
+            return
+
+        val = server.getConf(key)
+        if not val:
+            val = self._murmur.getDefaultConf().get(key, "")
+
+        return val
+
+    def get_server_name(self, server):
+        return self.get_conf(server, "registername")
+
+    def get_server_host(self, server):
+        return self.get_conf(server, "hostname")
+
+    def get_server_port(self, server):
+        return self.get_conf(server, "port")
+
+    def get_server_password(self, server):
+        return self.get_conf(server, "port")
+
+    def get_server_welcometext(self, server):
+        return self.get_conf(server, "welcometext")
+
+    def get_server_tree(self, server):
+        return server.getTree()
+
+    def get_server_channels(self, server):
+        return server.getChannels().__dict__
+
+    def get_server_uptime(self, server, for_humans=False):
+        uptime = server.getUptime()
+        return uptime if not for_humans else str(timedelta(seconds=uptime))
+
+    def get_server_users(self, server):
+        return server.getUsers()
+
+    def get_server_registered_users(self, server):
+        return server.getRegisteredUsers()
+
+    # set config
+    def set_conf(self, server, key, value):
+        server.setConf(key, value)
+        return value
+
+    def set_server_name(self, server, value):
+        return self.set_conf(server, "registername", value)
+
+    def set_server_host(self, server, value):
+        return self.set_conf(server, "hostname", value)
+
+    def set_server_port(self, server, value):
+        return self.set_conf(server, "port", value)
+
+    def set_server_password(self, server, value):
+        return self.set_conf(server, "port", value)
+
+    def set_server_welcometext(self, server, value):
+        return self.set_conf(server, "welcometext", value)
+
+    def set_server_users(self, server, value):
+        return server.set_conf(server, "users", value)
+
+    def set_server_timeout(self, server, value):
+        return server.set_conf(server, "timeout", value)
+
+    def set_server_bandwidth(self, server, value):
+        return server.set_conf(server, "bandwidth", value)
+
+    # user
+    def set_user_mute(self, server, user):
+        state = server.getState(user.session)
+        state.mute = True
+        state.suppress = True
+        server.setState(state)
+
+    def set_user_unmute(self, server, user):
+        state = server.getState(user.session)
+        state.mute = False
+        state.suppress = False
+        server.setState(state)
+
+    def send_user_message(self, server, user, msg):
+        return server.sendMessageChannel(user.session, message)
+
+    def kick_user(self, server, user, msg):
+        return server.kickUser(user.session, message)
+
+    # channel
+    def add_channel(self, server, name, level=0):
+        return server.addChannel(name, level)
+
+    def remove_channel(self, server, channel_id):
+        server.addChannel(channel_id)
+
+    def get_channel_state(self, server, channel_id):
+        return server.getChannelState(channel_id).__dict__
+
+    def send_channel_message(self, server, channel_id, msg):
+        return server.sendMessageChannel(channel_id, True, message)
+
+    # fancy repl thingy... or not.
+    def interactive_mode(self):
+        if IPYTHON_MODE:
+            embed(header=self.__doc__)
+        else:
+            print (self.__doc__)
+            pdb.set_trace()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--ice-host",
+        type=str,
+        default=ICE_HOST,
+        help="Ice host (eg: localhost)",
+    )
+    parser.add_argument(
+        "--ice-port",
+        type=int,
+        default=ICE_PORT,
+        help="Ice Port (eg: 6502)",
+    )
+    parser.add_argument(
+        "--ice-root",
+        type=str,
+        default=ICE_ROOT,
+        help="Ice Slices root directory (eg: /usr/share/ice/slice)",
+    )
+    parser.add_argument(
+        "--ice-murmur", type=str, default=ICE_MURMUR, help="Murmur Ice File"
+    )
+    parser.add_argument(
+        "--secret",
+        type=str,
+        default="",
+        help="Also reads the environment variable MURMUR_SECRET",
+    )
+
+
+    args = parser.parse_args()
+    mumble = murmurc(
+        args.ice_host, args.ice_port, args.ice_root, args.ice_murmur, args.secret
+    )
+    mumble.connect()
+    mumble.interactive_mode()
+    mumble.disconnect()
