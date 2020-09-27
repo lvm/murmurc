@@ -55,6 +55,7 @@ ICE_PORT = 6502
 ICE_ROOT = "/usr/share/ice/slice"
 ICE_MURMUR = "/usr/share/slice/Murmur.ice"
 
+
 class murmurc(object):
     """
 welcome to murmur conf
@@ -103,7 +104,6 @@ welcome to murmur conf
     mumble.remove_channel(server, channel_id)
     mumble.get_channel_state(server, channel_id)
     mumble.send_channel_message(server, channel_id, msg)
-    mumble.interactive_mode()
 
     """
 
